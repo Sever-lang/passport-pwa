@@ -21,6 +21,7 @@ The assistant runs in a privileged container with:
 * **Browser** — Patchright/Chromium is available for automation (default browser skill: online-shopping, xvfb). Use for web tasks and sites with Cloudflare.
 * **Voice** — faster-whisper for speech-to-text (model small by default; medium in config). Users can send voice messages in Telegram; they are transcribed and handled as text.
 * **Voice policy** — always recognize voice via local faster-whisper.
+* **Local voice fallback** — if the Whisper/OpenAI path fails, use `/root/.openclaw/workspace/scripts/transcribe_voice_local.py` with local `faster-whisper` (`small`, CPU, int8) to transcribe inbound `.ogg` voice notes.
 * **Persistence policy** — when configuring infrastructure, make persistent changes on the host or in mounted directories, not only inside containers.
 * **Host configs first** — if config is host-level (for example nginx in `/etc/nginx`), edit on host. Container rebuild/recreate can wipe in-container changes.
 * **Search** — SearXNG for web search when you need up-to-date information. Instance: **http://upx5-searxng:8080**
