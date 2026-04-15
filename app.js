@@ -55,7 +55,10 @@ function el(tag, attrs = {}, children = []) {
 function appLayout(content) {
   const shell = el('div', { class: 'app-shell' }, [
     el('div', { class: 'topbar' }, [
-      el('div', { class: 'brand' }, 'Паспорт безопасности объекта'),
+      el('div', { class: 'brand' }, [
+        el('img', { class: 'brand-logo', src: 'logo-passport.jpg', alt: 'Логотип' }),
+        'Паспорт безопасности объекта'
+      ]),
       el('div', { class: 'actions' }, [
         el('span', { class: 'badge' }, state.user ? `Лимит: ${state.access.unlimited ? 'безлимит' : state.access.remaining}` : 'PWA demo'),
         state.user
@@ -72,7 +75,10 @@ function appLayout(content) {
 function landingView() {
   return appLayout(el('div', {}, [
     el('section', { class: 'card hero' }, [
-      el('div', { class: 'hero-kicker' }, 'Для риелтора и клиента'),
+      el('div', { class: 'hero-brand' }, [
+        el('img', { class: 'hero-logo', src: 'logo-passport.jpg', alt: 'Логотип Паспорта безопасности объекта' }),
+        el('div', { class: 'hero-kicker' }, 'Для риелтора и клиента')
+      ]),
       el('h1', {}, 'Паспорт безопасности объекта'),
       el('p', { class: 'hero-lead' }, 'Понятный отчёт по объекту недвижимости: что проверено, какие риски выявлены и что важно учесть перед сделкой.'),
       el('p', {}, 'Удобный способ оформить результат проверки объекта в понятном виде и показать клиенту реальную проделанную работу.'),
