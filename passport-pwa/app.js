@@ -72,19 +72,20 @@ function appLayout(content) {
 function landingView() {
   return appLayout(el('div', {}, [
     el('section', { class: 'card hero' }, [
-      el('div', { class: 'badge' }, 'PWA • можно добавить на экран'),
+      el('div', { class: 'hero-kicker' }, 'Для риелтора и клиента'),
       el('h1', {}, 'Паспорт безопасности объекта'),
-      el('p', {}, 'Понятный отчёт по объекту недвижимости для риелтора и клиента: что проверено, какие риски выявлены и что важно учесть перед сделкой. Удобный способ оформить результат проверки объекта в понятном виде и показать клиенту реальную проделанную работу.'),
-      el('div', { class: 'actions' }, [
+      el('p', { class: 'hero-lead' }, 'Понятный отчёт по объекту недвижимости: что проверено, какие риски выявлены и что важно учесть перед сделкой.'),
+      el('p', {}, 'Удобный способ оформить результат проверки объекта в понятном виде и показать клиенту реальную проделанную работу.'),
+      el('div', { class: 'actions hero-actions' }, [
         el('button', { class: 'btn btn-primary', onclick: () => { state.currentView = 'simple'; render(); } }, 'Попробовать бесплатно'),
-        el('button', { class: 'btn btn-accent', onclick: loginDemo }, 'Войти через ВК'),
-        el('button', { class: 'btn btn-secondary', onclick: () => { const code = prompt('Введите промокод'); activatePromo(code); } }, 'Активировать промокод')
+        el('button', { class: 'btn btn-secondary', onclick: loginDemo }, 'Войти через ВК'),
+        el('button', { class: 'btn btn-ghost', onclick: () => { const code = prompt('Введите промокод'); activatePromo(code); } }, 'Активировать промокод')
       ])
     ]),
-    el('section', { class: 'grid grid-3' }, [
-      infoCard('Что это такое', 'Сервис помогает риелтору показать клиенту, какие проверки были проведены, какие риски выявлены и что рекомендуется уточнить перед сделкой.'),
-      infoCard('Что входит', 'Паспорт продавца, ИНН, ФССП, банкротство, суды, сведения по объекту, ограничения, риски и рекомендации.'),
-      infoCard('Что получает клиент', 'Понятный PDF «Паспорт безопасности объекта» для работы с клиентом и подготовки объекта к продаже.')
+    el('section', { class: 'grid grid-3 feature-grid' }, [
+      infoCard('Что это такое', 'Сервис помогает риелтору показать клиенту, какие проверки были проведены, какие риски выявлены и что рекомендуется уточнить перед сделкой.', 'feature-card'),
+      infoCard('Что входит', 'Паспорт продавца, ИНН, ФССП, банкротство, суды, сведения по объекту, ограничения, риски и рекомендации.', 'feature-card'),
+      infoCard('Что получает клиент', 'Понятный PDF «Паспорт безопасности объекта» для работы с клиентом и подготовки объекта к продаже.', 'feature-card')
     ]),
     el('section', { class: 'grid grid-3' }, [
       tariffCard('Простой', 'Быстрая первичная проверка. Результат на экране, без PDF.', false, 'Попробовать', () => { state.currentView = 'simple'; render(); }),
@@ -236,8 +237,8 @@ function checkCard(key, title, data) {
   ]);
 }
 
-function infoCard(title, text) {
-  return el('section', { class: 'card section' }, [el('h3', {}, title), el('p', {}, text)]);
+function infoCard(title, text, extraClass = '') {
+  return el('section', { class: `card section ${extraClass}`.trim() }, [el('h3', {}, title), el('p', {}, text)]);
 }
 
 function tariffCard(title, text, featured, cta, handler) {
