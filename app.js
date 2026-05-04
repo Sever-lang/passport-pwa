@@ -215,6 +215,7 @@ function newCasePanel() {
         el('button', { class: 'btn btn-accent', type: 'button', onclick: () => runAutomation(state.currentCaseId, true) }, 'Запустить автопроверку')
       ])
     ]),
+    automationPanel(caseData),
     el('div', { class: 'form-grid' }, [
       field('address', 'Адрес объекта', caseData.address || ''),
       field('cadastral', 'Кадастровый номер', caseData.cadastral || ''),
@@ -277,6 +278,27 @@ function checkCard(key, title, data) {
       field(`section_${key}_result`, 'Результат', data.result || ''),
       field(`section_${key}_note`, 'Комментарий', data.note || '', 'textarea')
     ])
+  ]);
+}
+
+function automationPanel(caseData) {
+  const items = Object.entries(automationRecipes).map(([key, recipe]) => {
+    const current = caseData.automation?.[key];
+    const status = current?.status || 'Ещё не запускалось';
+    const statusClass = status.includes('капча') ? 'status-semi' : (current ? 'status-ok' : 'status-idle');
+    return el('div', { class: 'auto-item' }, [
+      el('div', { class: 'auto-item-head' }, [
+        el('strong', {}, recipe.title),
+        el('span', { class: statusClass }, status)
+      ]),
+      el('div', { class: 'muted' }, current?.message || 'Источник ещё не запускался')
+    ]);
+  });
+
+  return el('div', { class: 'card section' }, [
+    el('h3', {}, 'Источники и статусы'),
+    el('p', {}, 'Здесь видно, какие источники уже отработали автоматически, а какие встанут в полуавтомат из-за капчи или ограничений.'),
+    el('div', { class: 'auto-results', style: 'margin-top:16px' }, items)
   ]);
 }
 
@@ -412,6 +434,10 @@ function runAutomation(id, fromDraft = false) {
   }
   if (!item) return alert('Сначала сохраните проверку');
 
+  item.status = 'Идёт автопроверка';
+  upsertCase(item);
+  render();
+
   const results = {};
   Object.entries(automationRecipes).forEach(([key, recipe]) => {
     results[key] = {
@@ -474,6 +500,7 @@ function generatePdf(id, fromDraft = false) {
   const w = window.open('', '_blank');
   w.document.write(html);
   w.document.close();
+  render();
 }
 
 function pdfHtml(item) {
