@@ -238,8 +238,12 @@ function newCasePanel() {
     ])
   ]);
   return el('section', { class: `card section panel ${state.currentView === 'new' ? '' : 'hidden'}`, id: 'panel-new' }, [
-    el('h2', {}, state.currentCaseId ? 'Редактирование проверки' : 'Новая проверка'),
-    el('p', {}, 'В MVP результаты внешних проверок и выводы заполняются вручную.'),
+    el('div', { class: 'row-between' }, [
+      el('h2', {}, state.currentCaseId ? 'Редактирование проверки' : 'Новая проверка'),
+      el('span', { class: 'badge' }, caseData.status || 'Черновик')
+    ]),
+    el('p', {}, 'Здесь собирается заявка, запускаются автопроверки и формируется Паспорт безопасности объекта.'),
+    caseData.autoSummary ? el('p', { class: 'muted' }, `Текущий статус автопроверок: ${caseData.autoSummary}`) : '',
     el('div', { style: 'margin-top:16px' }, [form])
   ]);
 }
@@ -305,6 +309,7 @@ function switchTab(view) {
 function loginDemo() {
   state.user = { id: 'vk-demo', name: 'Сергей / demo VK' };
   loadAccess();
+  state.currentCaseId = null;
   state.currentView = 'dashboard';
   render();
 }
@@ -332,15 +337,21 @@ function addDays(days) {
   return d.toISOString().slice(0, 10);
 }
 
-function getCurrentCase() {
-  if (!state.currentCaseId) return { sections: {} };
-  return state.cases.find(x => x.id === state.currentCaseId) || { sections: {} };
+function blankCase() {
+  return {
+    sections: Object.fromEntries(checkSections.map(([key]) => [key, { result: '', note: '' }])),
+    automation: {},
+    autoSummary: '',
+    status: 'Черновик'
+  };
 }
 
-function saveCaseFromForm(form) {
-  const data = new FormData(form);
-  const id = state.currentCaseId || uid();
-  const existing = state.cases.find(x => x.id === id) || {};
+function getCurrentCase() {
+  if (!state.currentCaseId) return blankCase();
+  return state.cases.find(x => x.id === state.currentCaseId) || blankCase();
+}
+
+function caseFromFormData(data, existing = {}, id = uid()) {
   const item = {
     id,
     address: data.get('address') || '',
@@ -364,12 +375,27 @@ function saveCaseFromForm(form) {
       note: data.get(`section_${key}_note`) || ''
     };
   });
-  const idx = state.cases.findIndex(x => x.id === id);
+  return item;
+}
+
+function upsertCase(item) {
+  const idx = state.cases.findIndex(x => x.id === item.id);
   if (idx >= 0) state.cases[idx] = item; else state.cases.push(item);
-  state.currentCaseId = id;
+  state.currentCaseId = item.id;
   saveCases();
-  alert('Проверка сохранена');
-  switchTab('cases');
+}
+
+function saveCaseFromForm(form, options = {}) {
+  const data = new FormData(form);
+  const id = state.currentCaseId || uid();
+  const existing = state.cases.find(x => x.id === id) || blankCase();
+  const item = caseFromFormData(data, existing, id);
+  upsertCase(item);
+  if (!options.silent) {
+    alert('Проверка сохранена');
+    switchTab('cases');
+  }
+  return item;
 }
 
 function editCase(id) {
@@ -382,8 +408,7 @@ function runAutomation(id, fromDraft = false) {
   if ((!item || !id) && fromDraft) {
     const form = document.querySelector('#panel-new form');
     if (!form) return;
-    saveCaseFromForm(form);
-    item = state.cases.find(x => x.id === state.currentCaseId);
+    item = saveCaseFromForm(form, { silent: true });
   }
   if (!item) return alert('Сначала сохраните проверку');
 
@@ -403,7 +428,7 @@ function runAutomation(id, fromDraft = false) {
 
   item.automation = results;
   item.autoSummary = Object.values(results).map(x => x.status).join(' • ');
-  item.status = 'Автопроверка выполнена';
+  item.status = Object.values(results).some(x => x.status.includes('капча')) ? 'Автопроверка: нужен полуавтомат' : 'Автопроверка выполнена';
 
   if (item.sections.bankruptcy) {
     item.sections.bankruptcy.result = 'Проверено автоматически';
@@ -422,7 +447,7 @@ function runAutomation(id, fromDraft = false) {
     item.sections.fssp.note = results.fssp.message;
   }
 
-  saveCases();
+  upsertCase(item);
   render();
   alert('Автопроверка запущена. Часть источников выполнена автоматически, часть помечена как полуавтоматическая.');
 }
@@ -432,8 +457,7 @@ function generatePdf(id, fromDraft = false) {
   if (!item && fromDraft) {
     const form = document.querySelector('#panel-new form');
     if (!form) return;
-    saveCaseFromForm(form);
-    item = state.cases.find(x => x.id === state.currentCaseId);
+    item = saveCaseFromForm(form, { silent: true });
   }
   if (!item) return alert('Сначала сохраните проверку');
   if (item.tariff !== 'Простой' && !state.access.unlimited && state.access.remaining <= 0) {
@@ -444,8 +468,8 @@ function generatePdf(id, fromDraft = false) {
     item.pdfGenerated = true;
     item.status = 'PDF сформирован';
     saveAccess();
-    saveCases();
   }
+  upsertCase(item);
   const html = pdfHtml(item);
   const w = window.open('', '_blank');
   w.document.write(html);
@@ -468,11 +492,11 @@ function pdfHtml(item) {
   <div class="tag">Паспорт безопасности объекта</div>
   <h1>${escapeHtml(item.address || 'Без адреса')}</h1>
   <div class="muted">Кадастровый номер: ${escapeHtml(item.cadastral || 'не указан')} • Тип объекта: ${escapeHtml(item.objectType || 'не указан')}</div>
-  <div class="card"><h2>Краткая сводка</h2><p class="muted">Подготовил: риелтор / пользователь сервиса</p><p><strong>Продавец:</strong> ${escapeHtml(item.sellerName || 'не указан')}</p><p><strong>Комментарий:</strong> ${escapeHtml(item.comment || '—')}</p><p><strong>Итог:</strong> Отчёт подготовлен в черновом MVP-формате для показа структуры «Паспорта безопасности объекта».</p></div>
+  <div class="card"><h2>Краткая сводка</h2><p class="muted">Подготовил: риелтор / пользователь сервиса</p><p><strong>Продавец:</strong> ${escapeHtml(item.sellerName || 'не указан')}</p><p><strong>Комментарий:</strong> ${escapeHtml(item.comment || '—')}</p><p><strong>Статус:</strong> ${escapeHtml(item.status || 'Черновик')}</p><p><strong>Итог:</strong> Отчёт сформирован из карточки объекта и результатов автоматических/полуавтоматических проверок.</p></div>
   <div class="card"><h2>Что проверено</h2><table><thead><tr><th>Блок</th><th>Результат</th><th>Комментарий</th></tr></thead><tbody>${sectionRows}</tbody></table></div>
   <div class="card"><h2>Автоматические проверки</h2><table><thead><tr><th>Источник</th><th>Статус</th><th>Результат</th></tr></thead><tbody>${automationRows || '<tr><td colspan="3">Автопроверки ещё не запускались</td></tr>'}</tbody></table></div>
   <div class="card"><h2>Сведения об объекте</h2><p><strong>Адрес:</strong> ${escapeHtml(item.address || '—')}</p><p><strong>Кадастровый номер:</strong> ${escapeHtml(item.cadastral || '—')}</p><p><strong>Тип объекта:</strong> ${escapeHtml(item.objectType || '—')}</p></div>
-  <div class="card"><h2>Итоговое заключение</h2><p>Данный отчёт не является юридическим заключением. Он подготовлен на основании открытых источников и данных, внесённых пользователем в сервис. Отдельные сведения могут требовать дополнительной проверки.</p></div>
+  <div class="card"><h2>Итоговое заключение</h2><p>Данный отчёт не является юридическим заключением. Он подготовлен на основании открытых источников, автоматических проверок и данных, внесённых пользователем в сервис. Источники, помеченные как полуавтоматические, требуют дополнительного подтверждения.</p></div>
   </body></html>`;
 }
 
@@ -482,6 +506,8 @@ function escapeHtml(s) {
 
 function render() {
   const root = document.getElementById('app');
+  const existed = state.currentCaseId ? state.cases.find(x => x.id === state.currentCaseId) : null;
+  if (state.currentCaseId && !existed) state.currentCaseId = null;
   root.innerHTML = '';
   const view = state.user ? cabinetView() : (state.currentView === 'simple' ? simpleView() : landingView());
   root.append(view);
