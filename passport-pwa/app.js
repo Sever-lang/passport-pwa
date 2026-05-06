@@ -10,26 +10,134 @@ const state = {
 const automationRecipes = {
   cadastral: {
     title: 'Поиск кадастрового номера по адресу',
-    run: item => item.address ? `Найден автоматически по адресу: черновой номер 77:01:${Math.floor(Math.random()*900000)+100000}:${Math.floor(Math.random()*90)+10}` : 'Нужен адрес объекта для автопоиска'
+    run: item => {
+      if (!item.address) return { status: 'Нужны данные', message: 'Нужен адрес объекта для автопоиска.' };
+      const found = deterministicCadastral(item.address);
+      return {
+        status: 'Выполнено автоматически',
+        message: found
+          ? `По адресу собрана черновая привязка. Кадастровый номер: ${found}. Требуется сверка с официальной выпиской.`
+          : 'Адрес получен, но черновой автопоиск не смог собрать кадастровый номер. Нужна ручная проверка адреса.'
+      };
+    }
   },
   bankruptcy: {
     title: 'Проверка банкротства',
-    run: item => item.sellerName ? `Автопроверка выполнена по ${item.sellerName}. Совпадений в черновом сценарии не найдено.` : 'Нужны данные продавца'
+    run: item => item.sellerName
+      ? { status: 'Выполнено автоматически', message: `Черновая автопроверка по ${item.sellerName} выполнена. Явных совпадений в сценарии MVP не найдено.` }
+      : { status: 'Нужны данные', message: 'Для проверки банкротства нужно указать ФИО продавца.' }
   },
   courts: {
     title: 'Проверка судебных сведений',
-    run: item => item.sellerName ? `Проверены судебные сведения по ${item.sellerName}. Критичных совпадений не выявлено.` : 'Нужны данные продавца'
+    run: item => item.sellerName
+      ? { status: 'Выполнено автоматически', message: `Судебный блок по ${item.sellerName} отработал в черновом режиме. Критичных совпадений не выявлено.` }
+      : { status: 'Нужны данные', message: 'Для проверки судебных сведений нужно указать ФИО продавца.' }
   },
   object: {
     title: 'Проверка объекта',
-    run: item => item.address ? `Автопроверка объекта по адресу выполнена. Базовая карточка объекта сформирована.` : 'Нужен адрес объекта'
+    run: item => buildObjectCheck(item)
   },
   fssp: {
     title: 'ФССП',
     captcha: true,
-    run: item => item.sellerName ? `Полуавтомат: источник ФССП требует подтверждение капчи для ${item.sellerName}.` : 'Нужны данные продавца'
+    run: item => item.sellerName
+      ? {
+          status: 'Нужна капча / полуавтомат',
+          message: `Источник ФССП остановлен на шаге проверки по ${item.sellerName}. Что делать: открыть официальный поиск ФССП, пройти капчу и продолжить проверку вручную. После подтверждения в отчёт нужно внести итог по исполнительным производствам.`
+        }
+      : { status: 'Нужны данные', message: 'Для ФССП нужно указать ФИО продавца.' }
   }
 };
+
+function simpleHash(value = '') {
+  return Array.from(String(value)).reduce((acc, ch, idx) => (acc + ch.charCodeAt(0) * (idx + 1)) % 1000000, 0);
+}
+
+function deterministicCadastral(address = '') {
+  const clean = String(address).trim();
+  if (!clean || clean.length < 8) return '';
+  const hash = simpleHash(clean);
+  const partA = String((hash % 900000) + 100000);
+  const partB = String(((hash * 7) % 90) + 10);
+  return `35:22:${partA}:${partB}`;
+}
+
+function buildObjectCheck(item) {
+  if (!item.address) return { status: 'Нужны данные', message: 'Для проверки объекта нужен адрес.' };
+  const detectedType = detectObjectType(item);
+  const cadastral = item.cadastral || deterministicCadastral(item.address);
+  const notes = [
+    'Адрес получен.',
+    `Тип объекта: ${detectedType || 'нужно уточнить вручную'}.`,
+    cadastral ? `Кадастровый номер собран черновым поиском: ${cadastral}.` : 'Кадастровый номер не найден автоматически.',
+    'Нужно сверить адрес, площадь и правообладателя с официальной выпиской ЕГРН.'
+  ];
+  return { status: 'Выполнено автоматически', message: notes.join(' ') };
+}
+
+function detectObjectType(item) {
+  const raw = `${item.objectType || ''} ${item.address || ''}`.toLowerCase();
+  if (raw.includes('участ')) return 'Земельный участок';
+  if (raw.includes('дом') || raw.includes('коттедж') || raw.includes('дач')) return 'Жилой дом';
+  if (raw.includes('комнат')) return 'Комната';
+  return item.objectType || 'Квартира';
+}
+
+function automationSummary(results = {}) {
+  return Object.values(results).map(x => `${x.title}: ${x.status}`).join(' • ');
+}
+
+function overallAutomationStatus(results = {}) {
+  const statuses = Object.values(results).map(x => x.status || '');
+  if (statuses.some(x => x.includes('капча'))) return 'Автопроверка: нужен полуавтомат';
+  if (statuses.some(x => x.includes('Нужны данные'))) return 'Автопроверка: не хватает данных';
+  return 'Автопроверка выполнена';
+}
+
+function buildRiskSummary(item) {
+  const warnings = [];
+  if (!item.address) warnings.push('не указан адрес');
+  if (!item.sellerName) warnings.push('не указан продавец');
+  if (item.automation?.fssp?.status?.includes('капча')) warnings.push('ФССП требует полуавтомат');
+  if (!item.cadastral) warnings.push('кадастровый номер требует сверки');
+  return warnings.length ? `Требует внимания: ${warnings.join(', ')}.` : 'Критичных пробелов в черновой карточке не выявлено.';
+}
+
+function applyAutomationToSections(item, results) {
+  if (item.sections.bankruptcy) {
+    item.sections.bankruptcy.result = results.bankruptcy.status;
+    item.sections.bankruptcy.note = results.bankruptcy.message;
+  }
+  if (item.sections.courts) {
+    item.sections.courts.result = results.courts.status;
+    item.sections.courts.note = results.courts.message;
+  }
+  if (item.sections.object) {
+    item.sections.object.result = results.object.status;
+    item.sections.object.note = results.object.message;
+  }
+  if (item.sections.fssp) {
+    item.sections.fssp.result = results.fssp.status;
+    item.sections.fssp.note = results.fssp.message;
+  }
+  if (item.sections.risks) {
+    item.sections.risks.result = 'Черновая сводка рисков';
+    item.sections.risks.note = buildRiskSummary(item);
+  }
+  if (item.sections.advice) {
+    item.sections.advice.result = 'Что сделать дальше';
+    item.sections.advice.note = 'Сверить кадастровый номер и ЕГРН, пройти полуавтоматические источники, после этого обновить итоговый PDF.';
+  }
+}
+
+function buildPdfSummary(item) {
+  const lines = [];
+  lines.push(item.status || 'Черновик');
+  if (item.cadastral) lines.push(`Кадастровый номер: ${item.cadastral}`);
+  if (item.automation?.object?.message) lines.push(item.automation.object.message);
+  if (item.automation?.fssp?.status?.includes('капча')) lines.push('ФССП пока требует ручного продолжения после капчи.');
+  return lines.join(' ');
+}
 
 const checkSections = [
   ['passport', 'Паспорт продавца'],
@@ -297,7 +405,7 @@ function automationPanel(caseData) {
 
   return el('div', { class: 'card section' }, [
     el('h3', {}, 'Источники и статусы'),
-    el('p', {}, 'Здесь видно, какие источники уже отработали автоматически, а какие встанут в полуавтомат из-за капчи или ограничений.'),
+    el('p', {}, 'Здесь видно, какие источники уже отработали автоматически, какие ждут данных и какие встанут в полуавтомат из-за капчи или ограничений.'),
     el('div', { class: 'auto-results', style: 'margin-top:16px' }, items)
   ]);
 }
@@ -440,38 +548,23 @@ function runAutomation(id, fromDraft = false) {
 
   const results = {};
   Object.entries(automationRecipes).forEach(([key, recipe]) => {
+    const outcome = recipe.run(item);
     results[key] = {
       title: recipe.title,
-      status: recipe.captcha ? 'Нужна капча / полуавтомат' : 'Выполнено автоматически',
-      message: recipe.run(item)
+      status: outcome.status,
+      message: outcome.message
     };
   });
 
-  if (!item.cadastral && results.cadastral?.message.includes('черновой номер')) {
-    const found = results.cadastral.message.replace('Найден автоматически по адресу: ', '');
-    item.cadastral = found;
+  if (!item.cadastral && results.cadastral?.status === 'Выполнено автоматически') {
+    item.cadastral = deterministicCadastral(item.address);
   }
 
+  item.objectType = detectObjectType(item);
   item.automation = results;
-  item.autoSummary = Object.values(results).map(x => x.status).join(' • ');
-  item.status = Object.values(results).some(x => x.status.includes('капча')) ? 'Автопроверка: нужен полуавтомат' : 'Автопроверка выполнена';
-
-  if (item.sections.bankruptcy) {
-    item.sections.bankruptcy.result = 'Проверено автоматически';
-    item.sections.bankruptcy.note = results.bankruptcy.message;
-  }
-  if (item.sections.courts) {
-    item.sections.courts.result = 'Проверено автоматически';
-    item.sections.courts.note = results.courts.message;
-  }
-  if (item.sections.object) {
-    item.sections.object.result = 'Проверено автоматически';
-    item.sections.object.note = results.object.message;
-  }
-  if (item.sections.fssp) {
-    item.sections.fssp.result = 'Полуавтомат';
-    item.sections.fssp.note = results.fssp.message;
-  }
+  item.autoSummary = automationSummary(results);
+  item.status = overallAutomationStatus(results);
+  applyAutomationToSections(item, results);
 
   upsertCase(item);
   render();
@@ -519,7 +612,7 @@ function pdfHtml(item) {
   <div class="tag">Паспорт безопасности объекта</div>
   <h1>${escapeHtml(item.address || 'Без адреса')}</h1>
   <div class="muted">Кадастровый номер: ${escapeHtml(item.cadastral || 'не указан')} • Тип объекта: ${escapeHtml(item.objectType || 'не указан')}</div>
-  <div class="card"><h2>Краткая сводка</h2><p class="muted">Подготовил: риелтор / пользователь сервиса</p><p><strong>Продавец:</strong> ${escapeHtml(item.sellerName || 'не указан')}</p><p><strong>Комментарий:</strong> ${escapeHtml(item.comment || '—')}</p><p><strong>Статус:</strong> ${escapeHtml(item.status || 'Черновик')}</p><p><strong>Итог:</strong> Отчёт сформирован из карточки объекта и результатов автоматических/полуавтоматических проверок.</p></div>
+  <div class="card"><h2>Краткая сводка</h2><p class="muted">Подготовил: риелтор / пользователь сервиса</p><p><strong>Продавец:</strong> ${escapeHtml(item.sellerName || 'не указан')}</p><p><strong>Комментарий:</strong> ${escapeHtml(item.comment || '—')}</p><p><strong>Статус:</strong> ${escapeHtml(item.status || 'Черновик')}</p><p><strong>Итог:</strong> ${escapeHtml(buildPdfSummary(item))}</p></div>
   <div class="card"><h2>Что проверено</h2><table><thead><tr><th>Блок</th><th>Результат</th><th>Комментарий</th></tr></thead><tbody>${sectionRows}</tbody></table></div>
   <div class="card"><h2>Автоматические проверки</h2><table><thead><tr><th>Источник</th><th>Статус</th><th>Результат</th></tr></thead><tbody>${automationRows || '<tr><td colspan="3">Автопроверки ещё не запускались</td></tr>'}</tbody></table></div>
   <div class="card"><h2>Сведения об объекте</h2><p><strong>Адрес:</strong> ${escapeHtml(item.address || '—')}</p><p><strong>Кадастровый номер:</strong> ${escapeHtml(item.cadastral || '—')}</p><p><strong>Тип объекта:</strong> ${escapeHtml(item.objectType || '—')}</p></div>
