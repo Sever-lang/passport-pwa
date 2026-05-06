@@ -135,8 +135,100 @@ function buildPdfSummary(item) {
   lines.push(item.status || 'Черновик');
   if (item.cadastral) lines.push(`Кадастровый номер: ${item.cadastral}`);
   if (item.automation?.object?.message) lines.push(item.automation.object.message);
-  if (item.automation?.fssp?.status?.includes('капча')) lines.push('ФССП пока требует ручного продолжения после капчи.');
+  if (item.manualSteps?.fssp?.completed) lines.push(`ФССП доведён вручную: ${item.manualSteps.fssp.result || 'результат внесён'}.`);
+  else if (item.automation?.fssp?.status?.includes('капча')) lines.push('ФССП пока требует ручного продолжения после капчи.');
   return lines.join(' ');
+}
+
+function defaultManualSteps() {
+  return {
+    fssp: {
+      title: 'ФССП',
+      waiting: false,
+      completed: false,
+      action: 'Открыть официальный поиск ФССП, пройти капчу, проверить продавца и внести итог.',
+      result: ''
+    }
+  };
+}
+
+function ensureManualSteps(item) {
+  item.manualSteps = item.manualSteps || defaultManualSteps();
+  item.manualSteps.fssp = { ...defaultManualSteps().fssp, ...(item.manualSteps.fssp || {}) };
+  return item.manualSteps;
+}
+
+function syncManualSteps(item) {
+  const steps = ensureManualSteps(item);
+  const fsspStatus = item.automation?.fssp?.status || '';
+  if (fsspStatus.includes('капча') && !steps.fssp.completed) {
+    steps.fssp.waiting = true;
+  }
+  if (steps.fssp.completed) {
+    steps.fssp.waiting = false;
+    if (item.automation?.fssp) {
+      item.automation.fssp.status = 'Завершено вручную';
+      item.automation.fssp.message = `Ручной этап завершён. Итог: ${steps.fssp.result || 'результат внесён риелтором.'}`;
+    }
+    if (item.sections?.fssp) {
+      item.sections.fssp.result = 'Завершено вручную';
+      item.sections.fssp.note = steps.fssp.result || 'Результат ручной проверки внесён риелтором.';
+    }
+  }
+}
+
+function manualStepCard(caseData, key, step) {
+  const status = step.completed ? 'Завершено' : (step.waiting ? 'Ждёт ручного шага' : 'Пока не требуется');
+  const statusClass = step.completed ? 'status-ok' : (step.waiting ? 'status-semi' : 'status-idle');
+  return el('div', { class: 'auto-item' }, [
+    el('div', { class: 'auto-item-head' }, [
+      el('strong', {}, `${step.title}: ручное продолжение`),
+      el('span', { class: statusClass }, status)
+    ]),
+    el('div', { class: 'muted' }, step.action),
+    step.waiting || step.completed ? el('div', { class: 'field' }, [
+      el('label', {}, 'Итог после ручного шага'),
+      el('textarea', {
+        rows: '3',
+        oninput: e => updateManualStepResult(key, e.target.value)
+      }, step.result || '')
+    ]) : '',
+    step.waiting && !step.completed ? el('div', { class: 'actions' }, [
+      el('button', { class: 'btn btn-secondary', type: 'button', onclick: () => markManualStepDone(key) }, 'Отметить как выполнено')
+    ]) : '',
+    step.completed ? el('div', { class: 'muted' }, 'Результат уже внесён в карточку и будет отражён в PDF.') : ''
+  ]);
+}
+
+function manualStepsPanel(caseData) {
+  const steps = { ...defaultManualSteps(), ...(caseData.manualSteps || {}) };
+  return el('div', { class: 'card section' }, [
+    el('h3', {}, 'Полуавтомат и ручное продолжение'),
+    el('p', {}, 'Если источник остановился на капче или ограничении, здесь можно довести проверку вручную и сохранить итог в карточку.'),
+    el('div', { class: 'auto-results', style: 'margin-top:16px' }, Object.entries(steps).map(([key, step]) => manualStepCard(caseData, key, step)))
+  ]);
+}
+
+function updateManualStepResult(stepKey, value) {
+  const item = state.cases.find(x => x.id === state.currentCaseId);
+  if (!item) return;
+  ensureManualSteps(item);
+  item.manualSteps[stepKey].result = value;
+  upsertCase(item);
+}
+
+function markManualStepDone(stepKey) {
+  const item = state.cases.find(x => x.id === state.currentCaseId);
+  if (!item) return alert('Сначала сохраните проверку');
+  ensureManualSteps(item);
+  item.manualSteps[stepKey].completed = true;
+  item.manualSteps[stepKey].waiting = false;
+  syncManualSteps(item);
+  item.autoSummary = automationSummary(item.automation || {});
+  item.status = overallAutomationStatus(item.automation || {});
+  upsertCase(item);
+  render();
+  alert('Ручной этап сохранён в карточке.');
 }
 
 const checkSections = [
@@ -324,6 +416,7 @@ function newCasePanel() {
       ])
     ]),
     automationPanel(caseData),
+    manualStepsPanel(caseData),
     el('div', { class: 'form-grid' }, [
       field('address', 'Адрес объекта', caseData.address || ''),
       field('cadastral', 'Кадастровый номер', caseData.cadastral || ''),
@@ -471,6 +564,7 @@ function blankCase() {
   return {
     sections: Object.fromEntries(checkSections.map(([key]) => [key, { result: '', note: '' }])),
     automation: {},
+    manualSteps: defaultManualSteps(),
     autoSummary: '',
     status: 'Черновик'
   };
@@ -497,6 +591,7 @@ function caseFromFormData(data, existing = {}, id = uid()) {
     updatedAt: new Date().toISOString(),
     autoSummary: existing.autoSummary || '',
     automation: existing.automation || {},
+    manualSteps: existing.manualSteps || defaultManualSteps(),
     sections: {}
   };
   checkSections.forEach(([key]) => {
@@ -562,9 +657,11 @@ function runAutomation(id, fromDraft = false) {
 
   item.objectType = detectObjectType(item);
   item.automation = results;
-  item.autoSummary = automationSummary(results);
-  item.status = overallAutomationStatus(results);
-  applyAutomationToSections(item, results);
+  ensureManualSteps(item);
+  syncManualSteps(item);
+  item.autoSummary = automationSummary(item.automation);
+  item.status = overallAutomationStatus(item.automation);
+  applyAutomationToSections(item, item.automation);
 
   upsertCase(item);
   render();
