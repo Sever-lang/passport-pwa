@@ -87,6 +87,21 @@ function automationSummary(results = {}) {
   return Object.values(results).map(x => `${x.title}: ${x.status}`).join(' • ');
 }
 
+function sourceMeta() {
+  return {
+    cadastral: { check: 'Поиск кадастрового номера по адресу', mode: 'Авто', source: 'Черновой адресный поиск MVP' },
+    object: { check: 'Сводка по объекту и типу недвижимости', mode: 'Авто', source: 'Карточка объекта + черновая логика MVP' },
+    bankruptcy: { check: 'Наличие признаков банкротства', mode: 'Авто', source: 'Блок проверки банкротства MVP' },
+    courts: { check: 'Судебные сведения по продавцу', mode: 'Авто', source: 'Блок судебных сведений MVP' },
+    fssp: { check: 'Исполнительные производства', mode: 'Полуавто', source: 'ФССП / ручное продолжение после капчи' }
+  };
+}
+
+function sourceModeLabel(key, item) {
+  if (item.manualSteps?.[key]?.completed) return 'Вручную завершено';
+  return sourceMeta()[key]?.mode || 'Авто';
+}
+
 function overallAutomationStatus(results = {}) {
   const statuses = Object.values(results).map(x => x.status || '');
   if (statuses.some(x => x.includes('капча'))) return 'Автопроверка: нужен полуавтомат';
@@ -483,22 +498,33 @@ function checkCard(key, title, data) {
 }
 
 function automationPanel(caseData) {
+  const meta = sourceMeta();
   const items = Object.entries(automationRecipes).map(([key, recipe]) => {
     const current = caseData.automation?.[key];
     const status = current?.status || 'Ещё не запускалось';
     const statusClass = status.includes('капча') ? 'status-semi' : (current ? 'status-ok' : 'status-idle');
-    return el('div', { class: 'auto-item' }, [
-      el('div', { class: 'auto-item-head' }, [
-        el('strong', {}, recipe.title),
+    return el('div', { class: 'source-card' }, [
+      el('div', { class: 'source-card-head' }, [
+        el('div', {}, [
+          el('strong', {}, recipe.title),
+          el('div', { class: 'muted source-line' }, `Что проверяем: ${meta[key]?.check || recipe.title}`)
+        ]),
         el('span', { class: statusClass }, status)
       ]),
-      el('div', { class: 'muted' }, current?.message || 'Источник ещё не запускался')
+      el('div', { class: 'source-meta' }, [
+        el('span', { class: 'badge' }, `Режим: ${sourceModeLabel(key, caseData)}`),
+        el('span', { class: 'badge' }, `Источник: ${meta[key]?.source || 'MVP'}`)
+      ]),
+      el('div', { class: 'source-result' }, [
+        el('strong', {}, 'Итог'),
+        el('div', { class: 'muted' }, current?.message || 'Источник ещё не запускался')
+      ])
     ]);
   });
 
   return el('div', { class: 'card section' }, [
     el('h3', {}, 'Источники и статусы'),
-    el('p', {}, 'Здесь видно, какие источники уже отработали автоматически, какие ждут данных и какие встанут в полуавтомат из-за капчи или ограничений.'),
+    el('p', {}, 'Здесь видно, что именно проверяется по каждому источнику, в каком режиме он работает и какой итог уже получен.'),
     el('div', { class: 'auto-results', style: 'margin-top:16px' }, items)
   ]);
 }
@@ -697,8 +723,9 @@ function pdfHtml(item) {
   const sectionRows = checkSections.map(([key, title]) => `
     <tr><td><strong>${title}</strong></td><td>${escapeHtml(item.sections?.[key]?.result || '—')}</td><td>${escapeHtml(item.sections?.[key]?.note || '—')}</td></tr>
   `).join('');
-  const automationRows = Object.values(item.automation || {}).map(x => `
-    <tr><td><strong>${escapeHtml(x.title)}</strong></td><td>${escapeHtml(x.status)}</td><td>${escapeHtml(x.message)}</td></tr>
+  const meta = sourceMeta();
+  const automationRows = Object.entries(item.automation || {}).map(([key, x]) => `
+    <tr><td><strong>${escapeHtml(x.title)}</strong><br><span class="muted">${escapeHtml(meta[key]?.check || '')}</span></td><td>${escapeHtml(sourceModeLabel(key, item))}</td><td>${escapeHtml(x.status)}</td><td>${escapeHtml(x.message)}</td></tr>
   `).join('');
   return `<!doctype html><html lang="ru"><head><meta charset="UTF-8"><title>Паспорт безопасности объекта</title>
   <style>
@@ -711,7 +738,7 @@ function pdfHtml(item) {
   <div class="muted">Кадастровый номер: ${escapeHtml(item.cadastral || 'не указан')} • Тип объекта: ${escapeHtml(item.objectType || 'не указан')}</div>
   <div class="card"><h2>Краткая сводка</h2><p class="muted">Подготовил: риелтор / пользователь сервиса</p><p><strong>Продавец:</strong> ${escapeHtml(item.sellerName || 'не указан')}</p><p><strong>Комментарий:</strong> ${escapeHtml(item.comment || '—')}</p><p><strong>Статус:</strong> ${escapeHtml(item.status || 'Черновик')}</p><p><strong>Итог:</strong> ${escapeHtml(buildPdfSummary(item))}</p></div>
   <div class="card"><h2>Что проверено</h2><table><thead><tr><th>Блок</th><th>Результат</th><th>Комментарий</th></tr></thead><tbody>${sectionRows}</tbody></table></div>
-  <div class="card"><h2>Автоматические проверки</h2><table><thead><tr><th>Источник</th><th>Статус</th><th>Результат</th></tr></thead><tbody>${automationRows || '<tr><td colspan="3">Автопроверки ещё не запускались</td></tr>'}</tbody></table></div>
+  <div class="card"><h2>Проверки по источникам</h2><table><thead><tr><th>Источник</th><th>Режим</th><th>Статус</th><th>Итог</th></tr></thead><tbody>${automationRows || '<tr><td colspan="4">Автопроверки ещё не запускались</td></tr>'}</tbody></table></div>
   <div class="card"><h2>Сведения об объекте</h2><p><strong>Адрес:</strong> ${escapeHtml(item.address || '—')}</p><p><strong>Кадастровый номер:</strong> ${escapeHtml(item.cadastral || '—')}</p><p><strong>Тип объекта:</strong> ${escapeHtml(item.objectType || '—')}</p></div>
   <div class="card"><h2>Итоговое заключение</h2><p>Данный отчёт не является юридическим заключением. Он подготовлен на основании открытых источников, автоматических проверок и данных, внесённых пользователем в сервис. Источники, помеченные как полуавтоматические, требуют дополнительного подтверждения.</p></div>
   </body></html>`;

@@ -188,6 +188,11 @@ button, input, textarea, select { font: inherit; }
 .auto-results { display: grid; gap: 12px; }
 .auto-item { padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: #fff; display: grid; gap: 8px; }
 .auto-item-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.source-card { padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: #fff; display: grid; gap: 12px; }
+.source-card-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.source-meta { display: flex; flex-wrap: wrap; gap: 8px; }
+.source-line { margin-top: 4px; }
+.source-result { display: grid; gap: 6px; }
 .status-ok { color: var(--success); font-weight: 700; }
 .status-semi { color: var(--warning); font-weight: 700; }
 .status-idle { color: var(--muted); font-weight: 700; }
