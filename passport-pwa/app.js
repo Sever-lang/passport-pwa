@@ -89,12 +89,43 @@ function automationSummary(results = {}) {
 
 function sourceMeta() {
   return {
-    cadastral: { check: 'Поиск кадастрового номера по адресу', mode: 'Авто', source: 'Черновой адресный поиск MVP' },
-    object: { check: 'Сводка по объекту и типу недвижимости', mode: 'Авто', source: 'Карточка объекта + черновая логика MVP' },
-    bankruptcy: { check: 'Наличие признаков банкротства', mode: 'Авто', source: 'Блок проверки банкротства MVP' },
-    courts: { check: 'Судебные сведения по продавцу', mode: 'Авто', source: 'Блок судебных сведений MVP' },
-    fssp: { check: 'Исполнительные производства', mode: 'Полуавто', source: 'ФССП / ручное продолжение после капчи' }
+    cadastral: { check: 'Поиск кадастрового номера по адресу', mode: 'Авто', source: 'Черновой адресный поиск MVP', manualTodo: 'Сверить номер с выпиской ЕГРН.' },
+    object: { check: 'Сводка по объекту и типу недвижимости', mode: 'Авто', source: 'Карточка объекта + черновая логика MVP', manualTodo: 'Проверить площадь, адрес и правообладателя по выписке.' },
+    bankruptcy: { check: 'Наличие признаков банкротства', mode: 'Авто', source: 'Блок проверки банкротства MVP', manualTodo: 'При сомнениях открыть официальный источник и сверить совпадения.' },
+    courts: { check: 'Судебные сведения по продавцу', mode: 'Авто', source: 'Блок судебных сведений MVP', manualTodo: 'При необходимости вручную проверить совпадения по ФИО.' },
+    fssp: { check: 'Исполнительные производства', mode: 'Полуавто', source: 'ФССП / ручное продолжение после капчи', manualTodo: 'Пройти капчу, проверить продавца и внести итог вручную.' }
   };
+}
+
+function sourceNeedsConfirmation(key, result) {
+  if (!result) return false;
+  if (key === 'fssp') return true;
+  return result.status === 'Выполнено автоматически';
+}
+
+function sourceManualTodo(key) {
+  return sourceMeta()[key]?.manualTodo || 'Проверить вручную при необходимости.';
+}
+
+function buildSourceRegistry(results = {}, item = {}) {
+  const meta = sourceMeta();
+  return Object.entries(results).reduce((acc, [key, value]) => {
+    const manualCompleted = Boolean(item.manualSteps?.[key]?.completed);
+    acc[key] = {
+      key,
+      title: value.title,
+      check: meta[key]?.check || value.title,
+      source: meta[key]?.source || 'MVP',
+      mode: sourceModeLabel(key, item),
+      status: value.status,
+      message: value.message,
+      lastRunAt: value.lastRunAt || item.updatedAt || '',
+      needsConfirmation: manualCompleted ? false : sourceNeedsConfirmation(key, value),
+      confirmed: manualCompleted,
+      manualTodo: manualCompleted ? 'Ручной этап завершён.' : sourceManualTodo(key)
+    };
+    return acc;
+  }, {});
 }
 
 function sourceModeLabel(key, item) {
@@ -239,6 +270,7 @@ function markManualStepDone(stepKey) {
   item.manualSteps[stepKey].completed = true;
   item.manualSteps[stepKey].waiting = false;
   syncManualSteps(item);
+  item.sourceRegistry = buildSourceRegistry(item.automation || {}, item);
   item.autoSummary = automationSummary(item.automation || {});
   item.status = overallAutomationStatus(item.automation || {});
   upsertCase(item);
@@ -498,33 +530,39 @@ function checkCard(key, title, data) {
 }
 
 function automationPanel(caseData) {
-  const meta = sourceMeta();
   const items = Object.entries(automationRecipes).map(([key, recipe]) => {
+    const row = caseData.sourceRegistry?.[key];
     const current = caseData.automation?.[key];
-    const status = current?.status || 'Ещё не запускалось';
-    const statusClass = status.includes('капча') ? 'status-semi' : (current ? 'status-ok' : 'status-idle');
+    const status = row?.status || current?.status || 'Ещё не запускалось';
+    const statusClass = status.includes('капча') ? 'status-semi' : ((row || current) ? 'status-ok' : 'status-idle');
     return el('div', { class: 'source-card' }, [
       el('div', { class: 'source-card-head' }, [
         el('div', {}, [
           el('strong', {}, recipe.title),
-          el('div', { class: 'muted source-line' }, `Что проверяем: ${meta[key]?.check || recipe.title}`)
+          el('div', { class: 'muted source-line' }, `Что проверяем: ${row?.check || recipe.title}`)
         ]),
         el('span', { class: statusClass }, status)
       ]),
       el('div', { class: 'source-meta' }, [
-        el('span', { class: 'badge' }, `Режим: ${sourceModeLabel(key, caseData)}`),
-        el('span', { class: 'badge' }, `Источник: ${meta[key]?.source || 'MVP'}`)
+        el('span', { class: 'badge' }, `Режим: ${row?.mode || sourceModeLabel(key, caseData)}`),
+        el('span', { class: 'badge' }, `Источник: ${row?.source || 'MVP'}`),
+        el('span', { class: 'badge' }, `Подтверждение: ${row ? (row.confirmed ? 'подтверждено' : (row.needsConfirmation ? 'нужно' : 'не требуется')) : '—'}`)
       ]),
+      row?.lastRunAt ? el('div', { class: 'muted' }, `Последний запуск: ${formatDateTime(row.lastRunAt)}`) : '',
       el('div', { class: 'source-result' }, [
         el('strong', {}, 'Итог'),
-        el('div', { class: 'muted' }, current?.message || 'Источник ещё не запускался')
+        el('div', { class: 'muted' }, row?.message || current?.message || 'Источник ещё не запускался')
+      ]),
+      el('div', { class: 'source-result' }, [
+        el('strong', {}, 'Что ещё проверить вручную'),
+        el('div', { class: 'muted' }, row?.manualTodo || 'Пока дополнительных действий не требуется')
       ])
     ]);
   });
 
   return el('div', { class: 'card section' }, [
     el('h3', {}, 'Источники и статусы'),
-    el('p', {}, 'Здесь видно, что именно проверяется по каждому источнику, в каком режиме он работает и какой итог уже получен.'),
+    el('p', {}, 'Здесь видно, что именно проверяется по каждому источнику, в каком режиме он работает, когда запускался и что ещё нужно подтвердить вручную.'),
     el('div', { class: 'auto-results', style: 'margin-top:16px' }, items)
   ]);
 }
@@ -617,6 +655,7 @@ function caseFromFormData(data, existing = {}, id = uid()) {
     updatedAt: new Date().toISOString(),
     autoSummary: existing.autoSummary || '',
     automation: existing.automation || {},
+    sourceRegistry: existing.sourceRegistry || {},
     manualSteps: existing.manualSteps || defaultManualSteps(),
     sections: {}
   };
@@ -685,6 +724,7 @@ function runAutomation(id, fromDraft = false) {
   item.automation = results;
   ensureManualSteps(item);
   syncManualSteps(item);
+  item.sourceRegistry = buildSourceRegistry(item.automation, item);
   item.autoSummary = automationSummary(item.automation);
   item.status = overallAutomationStatus(item.automation);
   applyAutomationToSections(item, item.automation);
@@ -723,9 +763,9 @@ function pdfHtml(item) {
   const sectionRows = checkSections.map(([key, title]) => `
     <tr><td><strong>${title}</strong></td><td>${escapeHtml(item.sections?.[key]?.result || '—')}</td><td>${escapeHtml(item.sections?.[key]?.note || '—')}</td></tr>
   `).join('');
-  const meta = sourceMeta();
-  const automationRows = Object.entries(item.automation || {}).map(([key, x]) => `
-    <tr><td><strong>${escapeHtml(x.title)}</strong><br><span class="muted">${escapeHtml(meta[key]?.check || '')}</span></td><td>${escapeHtml(sourceModeLabel(key, item))}</td><td>${escapeHtml(x.status)}</td><td>${escapeHtml(x.message)}</td></tr>
+  const registry = item.sourceRegistry || buildSourceRegistry(item.automation || {}, item);
+  const automationRows = Object.values(registry).map(row => `
+    <tr><td><strong>${escapeHtml(row.title)}</strong><br><span class="muted">${escapeHtml(row.check || '')}</span></td><td>${escapeHtml(row.mode)}</td><td>${escapeHtml(row.status)}</td><td>${escapeHtml(row.message)}<br><span class="muted">Подтверждение: ${escapeHtml(row.confirmed ? 'подтверждено' : (row.needsConfirmation ? 'нужно' : 'не требуется'))}</span><br><span class="muted">Ручная проверка: ${escapeHtml(row.manualTodo || '—')}</span><br><span class="muted">Последний запуск: ${escapeHtml(formatDateTime(row.lastRunAt))}</span></td></tr>
   `).join('');
   return `<!doctype html><html lang="ru"><head><meta charset="UTF-8"><title>Паспорт безопасности объекта</title>
   <style>
@@ -742,6 +782,13 @@ function pdfHtml(item) {
   <div class="card"><h2>Сведения об объекте</h2><p><strong>Адрес:</strong> ${escapeHtml(item.address || '—')}</p><p><strong>Кадастровый номер:</strong> ${escapeHtml(item.cadastral || '—')}</p><p><strong>Тип объекта:</strong> ${escapeHtml(item.objectType || '—')}</p></div>
   <div class="card"><h2>Итоговое заключение</h2><p>Данный отчёт не является юридическим заключением. Он подготовлен на основании открытых источников, автоматических проверок и данных, внесённых пользователем в сервис. Источники, помеченные как полуавтоматические, требуют дополнительного подтверждения.</p></div>
   </body></html>`;
+}
+
+function formatDateTime(value) {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString('ru-RU');
 }
 
 function escapeHtml(s) {
